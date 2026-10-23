@@ -5,7 +5,10 @@ import {
   CameraResultType,
   CameraSource
 } from '@capacitor/camera';
+import { supabase } from './services/supabase';
 import './style.css';
+
+const BUCKET = 'fotos-ponto';
 
 export default function PontoEletronicoApp() {
   const [fotoSelfie, setFotoSelfie] = useState(null);
@@ -25,12 +28,12 @@ export default function PontoEletronicoApp() {
   }, []);
 
   const registrarPonto = async () => {
+    setMensagem('Iniciando registro...');
     setCarregando(true);
     setMensagem('');
     setFotoSelfie(null);
 
     try {
-      // Verifica a permissão de câmera no Android.
       let permissoes = await Camera.checkPermissions();
 
       if (permissoes.camera !== 'granted') {
@@ -40,59 +43,84 @@ export default function PontoEletronicoApp() {
       }
 
       if (permissoes.camera !== 'granted') {
-        setMensagem(
-          'Permita o acesso à câmera para registrar seu ponto.'
-        );
+        setMensagem('Permita o acesso à câmera para continuar.');
         return;
       }
 
-      // Captura uma selfie diretamente pela câmera.
+      // 1. Capturar a selfie pela câmera nativa.
       const foto = await Camera.getPhoto({
+        
         quality: 70,
         allowEditing: false,
         resultType: CameraResultType.Uri,
         source: CameraSource.Camera
       });
+      setMensagem('Selfie capturada. Preparando envio...');
 
       if (!foto.webPath) {
-        setMensagem('Não foi possível obter a selfie.');
-        return;
+        throw new Error('A câmera não retornou a imagem.');
       }
 
-      // Só registra o horário depois de obter a selfie.
+      setMensagem('Enviando selfie para a nuvem...');
+
+      // 2. Converter a imagem em Blob.
+      const resposta = await fetch(foto.webPath);
+      const blob = await resposta.blob();
+
+      // 3. Criar um nome único para o arquivo.
+      const nomeArquivo = `selfie-${Date.now()}.jpg`;
+
+      // 4. Enviar a imagem para o Supabase Storage.
+      const { data, error } = await supabase.storage
+        .from(BUCKET)
+        .upload(nomeArquivo, blob, {
+          contentType: 'image/jpeg',
+          upsert: false
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      // 5. Obter a URL pública da imagem enviada.
+      const { data: dadosUrl } = supabase.storage
+        .from(BUCKET)
+        .getPublicUrl(data.path);
+
+      const urlPublica = dadosUrl.publicUrl;
+
+      // 6. Só registrar o ponto após o upload bem-sucedido.
       const agora = new Date();
 
       const registro = {
-        id: `${agora.getTime()}`,
+        id: String(agora.getTime()),
         data: agora.toLocaleDateString('pt-BR'),
         horario: agora.toLocaleTimeString('pt-BR'),
-        foto: foto.webPath
+        fotoUrl: urlPublica,
+        caminhoArquivo: data.path
       };
 
       const atualizados = [registro, ...registros];
 
-      setFotoSelfie(foto.webPath);
+      setFotoSelfie(urlPublica);
       setRegistros(atualizados);
 
-      // Guarda o histórico do ponto no armazenamento local.
-      // A foto exibida usa webPath e não é salva permanentemente aqui.
-      const historico = atualizados.map(
-        ({ id, data, horario }) => ({ id, data, horario })
-      );
-
+      // Guardar os dados do histórico no dispositivo.
       localStorage.setItem(
         'registrosPonto',
-        JSON.stringify(historico)
+        JSON.stringify(atualizados)
       );
 
-      setMensagem('Ponto registrado com sucesso!');
+      setMensagem('Selfie enviada e ponto registrado com sucesso!');
     } catch (erro) {
-      console.error('Erro ao registrar ponto:', erro);
+  console.error('Erro ao registrar ponto:', erro);
 
-      setMensagem(
-        'A captura foi cancelada ou não foi possível abrir a câmera. Nenhum ponto foi registrado.'
-      );
-    } finally {
+  setMensagem(
+    erro?.message
+      ? `Não foi possível registrar o ponto: ${erro.message}`
+      : 'Captura cancelada ou erro no envio. Nenhum ponto foi registrado.'
+  );
+}finally {
       setCarregando(false);
     }
   };
@@ -100,7 +128,7 @@ export default function PontoEletronicoApp() {
   const limparHistorico = () => {
     setRegistros([]);
     localStorage.removeItem('registrosPonto');
-    setMensagem('Histórico removido deste dispositivo.');
+    setMensagem('Histórico local removido. As imagens na nuvem não foram apagadas.');
   };
 
   return (
@@ -120,8 +148,7 @@ export default function PontoEletronicoApp() {
         <p className="etiqueta">CONTROLE DE JORNADA</p>
         <h2>Seu trabalho.<br />Seu registro.</h2>
         <p className="descricao">
-          Faça sua selfie para confirmar a marcação do ponto
-          presencial.
+          Faça sua selfie para confirmar a marcação do ponto presencial.
         </p>
       </section>
 
@@ -145,7 +172,7 @@ export default function PontoEletronicoApp() {
             <div className="selfie-vazia">
               <div className="silhueta">👤</div>
               <p>Sua selfie aparecerá aqui</p>
-              <span>Posicione-se em frente à câmera</span>
+              <span>A imagem será enviada para a nuvem</span>
             </div>
           )}
         </div>
@@ -153,8 +180,7 @@ export default function PontoEletronicoApp() {
         <div className="aviso">
           <span>i</span>
           <p>
-            A câmera será aberta para tirar uma nova selfie.
-            A galeria não será usada.
+            A selfie é capturada pela câmera e enviada ao Supabase Storage.
           </p>
         </div>
 
@@ -163,27 +189,19 @@ export default function PontoEletronicoApp() {
           onClick={registrarPonto}
           disabled={carregando}
         >
-          {carregando ? (
-            'Aguardando câmera...'
-          ) : (
-            <>
-              <span>📷</span> Registrar ponto com selfie
-            </>
-          )}
+          {carregando
+            ? 'Processando selfie...'
+            : '📷 Registrar ponto com selfie'}
         </button>
 
         {mensagem && (
-          <p
-            className="mensagem"
-            role="status"
-            aria-live="polite"
-          >
+          <p className="mensagem" role="status" aria-live="polite">
             {mensagem}
           </p>
         )}
 
         <p className="nota">
-          O horário só é registrado depois que a selfie é capturada.
+          O registro só é concluído depois que o envio da selfie dá certo.
         </p>
       </section>
 
@@ -209,6 +227,13 @@ export default function PontoEletronicoApp() {
                 <div className="registro-info">
                   <strong>Ponto presencial</strong>
                   <span>{registro.data}</span>
+                  <a
+                    href={registro.fotoUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Ver selfie na nuvem
+                  </a>
                 </div>
                 <time>{registro.horario}</time>
               </article>
@@ -217,17 +242,14 @@ export default function PontoEletronicoApp() {
         )}
 
         {registros.length > 0 && (
-          <button
-            className="botao-limpar"
-            onClick={limparHistorico}
-          >
+          <button className="botao-limpar" onClick={limparHistorico}>
             Limpar histórico deste dispositivo
           </button>
         )}
       </section>
 
       <footer>
-        <span> PontoFácil </span>
+        <span>PontoFácil</span>
         <p>Protótipo acadêmico de ponto eletrônico</p>
       </footer>
     </main>
