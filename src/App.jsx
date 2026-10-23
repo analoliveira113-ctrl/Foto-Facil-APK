@@ -1,4 +1,5 @@
-import { useState } from 'react';
+
+import React, { useEffect, useState } from 'react';
 import {
   Camera,
   CameraResultType,
@@ -6,119 +7,229 @@ import {
 } from '@capacitor/camera';
 import './style.css';
 
-export default function App() {
-  const [foto, setFoto] = useState(null);
-  const [mensagem, setMensagem] = useState(
-    'Sua próxima foto aparecerá aqui.'
-  );
+export default function PontoEletronicoApp() {
+  const [fotoSelfie, setFotoSelfie] = useState(null);
+  const [registros, setRegistros] = useState([]);
   const [carregando, setCarregando] = useState(false);
+  const [mensagem, setMensagem] = useState('');
 
-  async function abrirCamera() {
+  useEffect(() => {
+    try {
+      const salvos = JSON.parse(
+        localStorage.getItem('registrosPonto') || '[]'
+      );
+      setRegistros(salvos);
+    } catch {
+      setRegistros([]);
+    }
+  }, []);
+
+  const registrarPonto = async () => {
     setCarregando(true);
+    setMensagem('');
+    setFotoSelfie(null);
 
     try {
-      // Verifica se o aplicativo tem permissão para usar a câmera.
-      const permissoes = await Camera.checkPermissions();
+      // Verifica a permissão de câmera no Android.
+      let permissoes = await Camera.checkPermissions();
 
       if (permissoes.camera !== 'granted') {
-        const resultado = await Camera.requestPermissions({
+        permissoes = await Camera.requestPermissions({
           permissions: ['camera']
         });
-
-        if (resultado.camera !== 'granted') {
-          setMensagem(
-            'Permissão de câmera não concedida. Você pode tentar novamente.'
-          );
-          return;
-        }
       }
 
-      setMensagem('Abrindo as opções de foto...');
+      if (permissoes.camera !== 'granted') {
+        setMensagem(
+          'Permita o acesso à câmera para registrar seu ponto.'
+        );
+        return;
+      }
 
-      // O Android apresenta a opção de câmera ou galeria.
-      const imagem = await Camera.getPhoto({
-        quality: 90,
+      // Captura uma selfie diretamente pela câmera.
+      const foto = await Camera.getPhoto({
+        quality: 70,
         allowEditing: false,
         resultType: CameraResultType.Uri,
-        source: CameraSource.Prompt,
-        promptLabelHeader: 'Escolha uma opção',
-        promptLabelPhoto: 'Abrir galeria',
-        promptLabelPicture: 'Tirar foto',
-        promptLabelCancel: 'Cancelar'
+        source: CameraSource.Camera
       });
 
-      if (imagem.webPath) {
-        setFoto(imagem.webPath);
-        setMensagem('Foto carregada com sucesso!');
-      } else {
-        setMensagem('Não foi possível exibir a imagem.');
+      if (!foto.webPath) {
+        setMensagem('Não foi possível obter a selfie.');
+        return;
       }
+
+      // Só registra o horário depois de obter a selfie.
+      const agora = new Date();
+
+      const registro = {
+        id: `${agora.getTime()}`,
+        data: agora.toLocaleDateString('pt-BR'),
+        horario: agora.toLocaleTimeString('pt-BR'),
+        foto: foto.webPath
+      };
+
+      const atualizados = [registro, ...registros];
+
+      setFotoSelfie(foto.webPath);
+      setRegistros(atualizados);
+
+      // Guarda o histórico do ponto no armazenamento local.
+      // A foto exibida usa webPath e não é salva permanentemente aqui.
+      const historico = atualizados.map(
+        ({ id, data, horario }) => ({ id, data, horario })
+      );
+
+      localStorage.setItem(
+        'registrosPonto',
+        JSON.stringify(historico)
+      );
+
+      setMensagem('Ponto registrado com sucesso!');
     } catch (erro) {
-      // Cancelar a câmera/galeria pode rejeitar a Promise.
-      console.log('Captura cancelada ou não concluída:', erro);
+      console.error('Erro ao registrar ponto:', erro);
+
       setMensagem(
-        'Operação cancelada. Tudo certo! Você pode tentar novamente.'
+        'A captura foi cancelada ou não foi possível abrir a câmera. Nenhum ponto foi registrado.'
       );
     } finally {
       setCarregando(false);
     }
-  }
+  };
 
-  function limparFoto() {
-    setFoto(null);
-    setMensagem('Sua próxima foto aparecerá aqui.');
-  }
+  const limparHistorico = () => {
+    setRegistros([]);
+    localStorage.removeItem('registrosPonto');
+    setMensagem('Histórico removido deste dispositivo.');
+  };
 
   return (
-    <main className="pagina">
-      <section className="cartao">
-        <div className="icone-camera" aria-hidden="true">📸</div>
-        <p className="etiqueta">MEU PRIMEIRO APP NATIVO</p>
-        <h1>Foto Fácil</h1>
+    <main className="app">
+      <header className="topo">
+        <div className="marca">
+          <div className="marca-icone">PE</div>
+          <div>
+            <h1>Ponto<span>Fácil</span></h1>
+            <p>PONTO ELETRÔNICO MOBILE</p>
+          </div>
+        </div>
+        <span className="status">PRESENCIAL</span>
+      </header>
+
+      <section className="boas-vindas">
+        <p className="etiqueta">CONTROLE DE JORNADA</p>
+        <h2>Seu trabalho.<br />Seu registro.</h2>
         <p className="descricao">
-          Tire uma foto ou escolha uma imagem da sua galeria.
-          Sua imagem aparecerá aqui na mesma hora!
+          Faça sua selfie para confirmar a marcação do ponto
+          presencial.
         </p>
+      </section>
 
-        <button
-          className="botao-principal"
-          onClick={abrirCamera}
-          disabled={carregando}
-        >
-          {carregando ? 'Aguarde...' : '📷 Tirar Foto / Galeria'}
-        </button>
+      <section className="cartao-ponto">
+        <div className="cartao-titulo">
+          <div>
+            <span className="subtitulo">MARCAÇÃO DE PONTO</span>
+            <h3>Registrar agora</h3>
+          </div>
+          <div className="icone-camera">📸</div>
+        </div>
 
-        <div className="area-foto">
-          {foto ? (
+        <div className="area-selfie">
+          {fotoSelfie ? (
             <img
-              src={foto}
-              alt="Foto capturada ou selecionada"
-              className="foto-preview"
+              className="foto-selfie"
+              src={fotoSelfie}
+              alt="Selfie do registro de ponto"
             />
           ) : (
-            <div className="foto-vazia">
-              <span className="icone-vazio" aria-hidden="true">▧</span>
-              <p>Nenhuma foto selecionada</p>
-              <small>Sua pré-visualização aparecerá aqui</small>
+            <div className="selfie-vazia">
+              <div className="silhueta">👤</div>
+              <p>Sua selfie aparecerá aqui</p>
+              <span>Posicione-se em frente à câmera</span>
             </div>
           )}
         </div>
 
-        <p className="mensagem" role="status" aria-live="polite">
-          {mensagem}
-        </p>
+        <div className="aviso">
+          <span>i</span>
+          <p>
+            A câmera será aberta para tirar uma nova selfie.
+            A galeria não será usada.
+          </p>
+        </div>
 
-        {foto && (
-          <button className="botao-secundario" onClick={limparFoto}>
-            Remover foto
-          </button>
+        <button
+          className="botao-registrar"
+          onClick={registrarPonto}
+          disabled={carregando}
+        >
+          {carregando ? (
+            'Aguardando câmera...'
+          ) : (
+            <>
+              <span>📷</span> Registrar ponto com selfie
+            </>
+          )}
+        </button>
+
+        {mensagem && (
+          <p
+            className="mensagem"
+            role="status"
+            aria-live="polite"
+          >
+            {mensagem}
+          </p>
         )}
 
-        <div className="rodape">
-          <span>REACT</span><span>•</span><span>CAPACITOR</span>
-          <span>•</span><span>ANDROID</span>
-        </div>
+        <p className="nota">
+          O horário só é registrado depois que a selfie é capturada.
+        </p>
       </section>
+
+      <section className="historico">
+        <div className="historico-cabecalho">
+          <div>
+            <span className="subtitulo">ACOMPANHAMENTO</span>
+            <h3>Histórico de pontos</h3>
+          </div>
+          <span className="contador">{registros.length}</span>
+        </div>
+
+        {registros.length === 0 ? (
+          <div className="historico-vazio">
+            <span>🕒</span>
+            <p>Nenhum ponto registrado ainda.</p>
+          </div>
+        ) : (
+          <div className="lista-registros">
+            {registros.map((registro) => (
+              <article className="registro" key={registro.id}>
+                <div className="registro-icone">✓</div>
+                <div className="registro-info">
+                  <strong>Ponto presencial</strong>
+                  <span>{registro.data}</span>
+                </div>
+                <time>{registro.horario}</time>
+              </article>
+            ))}
+          </div>
+        )}
+
+        {registros.length > 0 && (
+          <button
+            className="botao-limpar"
+            onClick={limparHistorico}
+          >
+            Limpar histórico deste dispositivo
+          </button>
+        )}
+      </section>
+
+      <footer>
+        <span> PontoFácil </span>
+        <p>Protótipo acadêmico de ponto eletrônico</p>
+      </footer>
     </main>
   );
 }
